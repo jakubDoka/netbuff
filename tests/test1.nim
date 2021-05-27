@@ -55,32 +55,45 @@ test "type stress test":
 test "primitives":
     var buff = initBuffer()
 
+    # encoding almost any data
     buff.write(10.int32)
     buff.write(true)
     buff.write("hello")
     buff.write(10.2f32)
     buff.write(PI)
 
+    # buffer is for writing only
     try:
         discard buff.read(int)
         check false
     except AccessViolationDefect:
         discard
 
+    # this fixes it
     var reader = buff.reader
 
+    # reading is static
     check reader.read(int32) == 10.int32
 
+    # there is a boolean next so this will trigger error
     try:
         discard reader.read(int32)
         check false
     except ValueError:
         discard
 
+    # finishing all data
     check reader.read(bool) == true
     check reader.read(string) == "hello"
     check reader.read(float32) == 10.2f32
     check reader.read(float64) == PI
+
+    # nothing to read
+    try:
+        discard reader.read(bool)
+        check false
+    except OverflowDefect:
+        discard
 
 test "complex":
     type
@@ -99,27 +112,29 @@ test "complex":
         health: 30
     )
 
+    # we can still use write method
     buff.write(obj)
 
+    # creating a weird 2D seq with pointers
     var list: seq[seq[ref int32]]
-
     list.setLen(10)
-
     for i, r in list.mpairs:
         r.setLen(10)
         for j, e in r.mpairs:
             if i mod 2 == j mod 2:
                 new e
-                e[] = i.int32 + j.int32
+                e[] = i.int32 + j.int32 # some distinct values
 
     buff.write(list)
 
     var re = buff.reader
 
+    # once again read is sufficient
     check re.read(StackAllocated) == obj
 
     let decoded = re.read(seq[seq[ref int32]])
 
+    # checking pointers
     for y in 0..<10:
         for x in 0..<10:
             check decoded[y][x] == list[y][x] or decoded[y][x][] == list[y][x][]
@@ -127,9 +142,10 @@ test "complex":
 test "dls":
     var buff = initBuffer()
 
-    buff.write(10.int32)
     buff.write("hello")
+    buff.write(10.int32)
     buff.write(true)
+
     buff.write(10.4)
 
     var reader = buff.reader
@@ -139,6 +155,7 @@ test "dls":
         b: string
         c: bool
 
+    # imagine we don't know in witch order data is
     while true:
         decodeCase reader, res:
             @int32: a = res
@@ -146,6 +163,7 @@ test "dls":
             @bool: c = res
             @any: break
 
+    # even out of order, all values got loaded correctly
     check a == 10
     check b == "hello"
     check c == true
