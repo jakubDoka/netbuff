@@ -141,6 +141,6 @@ test "complex":
 
 ## bugs
 
-Runtime bugs should not happen though compile time especially regarding the hashing can. Some structures mights not be supported. Feel free to open the issue an it will be fixed in reasonable time (if possible to fix).
+Some structures mights not be supported ynd you will get compile time error. Feel free to open the issue an it will be fixed in reasonable time (if possible to fix).
 
 While developing this package i encountered a strange bug with nested tuples. I suspect it is somewhere in compiler and whatever i tried i could not fix it. Types like `(int, (int, (int, ref int)))` are thus not supported and will cause compile time error.
