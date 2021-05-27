@@ -35,7 +35,7 @@ test "dls":
     check reader.read(float) == 10.4
 ```
 
-`decodeCase` takes buffer to read and name of a variable that will be injected to each case branch. Branch with any as type acts as else branch and mast be last branch.
+`decodeCase` takes buffer to read and name of a variable that will be injected to each case branch. Branch with `any` as type acts as else branch and must be last branch.
 
 ## transferring primitives
 
@@ -123,4 +123,6 @@ test "complex":
 
 ## bugs
 
-Runtime bugs should not happen though compile time especially regarding the hashing. Some structures mights not be supported. Feel free to open the issue an it will be fixed in reasonable time.
+Runtime bugs should not happen though compile time especially regarding the hashing can. Some structures mights not be supported. Feel free to open the issue an it will be fixed in reasonable time (if possible to fix).
+
+While developing this package i encountered a strange bug with nested tuples. I suspect it is somewhere in compiler and whatever i tried i could not fix it. Types like `(int, (int, (int, ref int)))` are thus not supported and will cause compile time error.

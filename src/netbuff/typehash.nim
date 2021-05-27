@@ -10,18 +10,18 @@ proc uniqueString(n: NimNode, str: var string) =
             of "typeDesc":
                 uniqueString(n[1], str)
             else:
-                uniqueString(n[0], str)
+                for c in n:
+                    uniqueString(c, str)
         of nnkSym:
             let impl = n.getImpl
-            if impl.kind != nnkNilLit:
-                str.add(impl.treeRepr)
-            str.add(n.getType.repr)
+            str.add(n.repr)
             uniqueString(impl, str)
         of nnkTypeDef:
             case n[2].kind:
             of nnkObjectTy:
                 for id in n[2][2]:
-                    uniqueString(id[^2], str)
+                    for i in 0..<id.len-2:
+                        uniqueString(id[^2], str)
             of nnkTupleTy:
                 for id in n[2]:
                     uniqueString(id[^2], str)
@@ -29,6 +29,8 @@ proc uniqueString(n: NimNode, str: var string) =
                 uniqueString(n[2][0], str)
             else:
                 discard
+        of nnkRefTy, nnkPtrTy:
+            uniqueString(n.getType, str)
         else:
             discard
 
@@ -54,10 +56,15 @@ func hash*[T](): uint32 =
 when isMainModule:
     type All = object
         x, y, v: int32
-        r: float
+        r: ref float
+    type Fall = tuple
+        x, y, v: int32
+        r: ref float
     echo hash[float]()
     echo hash[int]()
     echo hash[Slice]()
     echo hash[All]()
+    echo hash[Fall]()
+    echo hash[(float, ref float)]()
     echo hash[float]()
     assert hash[seq[seq[int]]]() != hash[seq[seq[float]]]()

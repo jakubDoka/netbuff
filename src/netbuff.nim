@@ -36,7 +36,8 @@ template check(buf: Buffer, sz: int) =
             raise newException(OverflowDefect, "buffer overflowed (" &
                     $buf.view.b & " < " & $total & ")")
 
-proc wrap(n: NimNode): NimNode = newTree(nnkBracketExpr, ident("typeDesc"), n)
+proc wrap(n: NimNode, tpd: NimNode): NimNode =
+    newTree(nnkBracketExpr, tpd, n)
 
 template unrecognized(n: NimNode, ident: string) =
     error("unrecognized " & ident & "(unsupported)[" & n.lineInfo & "]")
@@ -44,6 +45,7 @@ template unrecognized(n: NimNode, ident: string) =
 macro readComplex(b: var Buffer, t: type): untyped =
     var calls = newNimNode(nnkStmtList)
 
+    let tpd = t.getType[0]
     var tp = t.getType[1]
     if tp.kind == nnkSym:
         tp = tp.getType
@@ -55,10 +57,10 @@ macro readComplex(b: var Buffer, t: type): untyped =
     of nnkObjectTy:
         for r in tp[2]:
             var tp = r.getType
-            tp = wrap(tp)
+            tp = wrap(tp, tpd)
             calls.add(quote do: result.`r` = `b`.readU(`tp`))
     of nnkBracketExpr:
-        let t = wrap(tp[1])
+        let t = wrap(tp[1], tpd)
         case tp[0].strVal:
             of "ref":
                 calls.add(quote do:
@@ -74,6 +76,12 @@ macro readComplex(b: var Buffer, t: type): untyped =
                 )
             of "seq":
                 calls.add(quote do: result = `b`.readSeq(`t`))
+            of "tuple":
+                for i in 0..<tp.len-1:
+                    let tp = wrap(tp[i+1], tpd)
+                    calls.add(quote do:
+                        result[`i`] = `b`.readU(`tp`)
+                    )
             else:
                 unrecognized(tp, "bracket expression")
     else:
@@ -108,56 +116,70 @@ macro writeComplex(b: var Buffer, v: typed): untyped =
                 calls.add(quote do:
                     `b`.writeSeq(`v`)
                 )
+            of "tuple":
+                for i in 0..<tp.len-1:
+                    calls.add(quote do:
+                        `b`.writeU(`v`[`i`])
+                    )
             else:
-                unrecognized(tp, "bracket expression")
+                unrecognized(v, "bracket expression")
     else:
-        unrecognized(tp, "typeDesc")
+        unrecognized(v, "typeDesc")
 
     return calls
 
 
 
+
 proc isSimple(tp: NimNode): bool =
-    let t =
-        case tp.kind:
-            of nnkBracketExpr: tp
-            else: tp.getType
-
-    assert t[0].strVal == "typeDesc"
-
-    let tp = t[1]
+    template err = error("check does not account for this object, please open the issue")
 
     case tp.kind:
     of nnkSym:
         case tp.strVal:
         of "pointer": error("pointer is not supported")
         of "string": return false
+        else: discard
+
         let tp = tp.getType
-        if t.kind == nnkSym: return true
         case tp.kind:
         of nnkObjectTy:
             for id in tp[2]:
-                if not isSimple(wrap(id.getType)):
+                if not isSimple(id.getType):
                     return false
-        else:
             return true
+        of nnkSym:
+            return true
+        of nnkBracketExpr:
+            case tp[0].strVal:
+            of "distinct":
+                return isSimple(tp[1])
+            else:
+                err()
+        else:
+            err()
     of nnkBracketExpr:
         case tp[0].strVal:
         of "ptr", "ref", "seq": return false
         of "tuple":
             for i in 1..<tp.len:
-                if not isSimple(wrap(tp[i])):
+                if not isSimple(tp[i]):
                     return false
-        else: return true
+            return true
+        else: err()
     else:
-        return true
-    return true
+        err()
+    err()
 
-macro assertSimpleMacro(tp: type): untyped = return newLit(isSimple(tp))
 
-func isSimple*[T](): bool =
+
+macro assertSimpleMacro(tp: type): untyped = return newLit(isSimple(tp.getType[1]))
+
+func isSimple[T](): bool =
     ## returns whether structure does not contain any pointers
     assertSimpleMacro T
+
+template simple*(tp: type): bool = isSimple[tp]()
 
 func writeU*[T](b: var Buffer, value: T) {.inline.}
 func readU*(b: var Buffer, T: type): T {.inline.}
@@ -167,7 +189,7 @@ func readSeq*(b: var Buffer, tp: type): seq[tp] {.inline.} =
     ## seq does not contain pointers.
     var l = b.readU(int32)
     result.setLen(l.int)
-    when isSimple[tp]():
+    when simple tp:
         let size = l*sizeof(tp)
         moveMem(result[0].addr, b.current, size)
         b.cursor.inc(size)
@@ -182,7 +204,7 @@ func writeSeq*[T](b: var Buffer, s: seq[T]) {.inline.} =
     b.writeU(l.int32)
     if l == 0: return
     let size = l*sizeof(T)
-    when isSimple[T]():
+    when simple T:
         let o = b.data[].len
         b.data[].setLen(o+size)
         moveMem(b.data[o].addr, s[0].unsafeAddr, size)
@@ -202,7 +224,7 @@ func readU*(b: var Buffer, T: type): T =
     if not b.readable:
         raise newException(AccessViolationDefect, "buffer is not for reading, use reader method")
 
-    when isSimple[T]():
+    when simple T:
         const sz = sizeof(T)
 
         b.check(sz)
@@ -231,7 +253,7 @@ template assertReadable(b: Buffer) =
 func writeU*[T](b: var Buffer, value: T) =
     assertReadable b
 
-    when isSimple[T]():
+    when simple T:
         const sz = sizeof(T)
         let o = b.data[].len
 
@@ -283,7 +305,7 @@ template clear*(b: var Buffer) =
 macro decodeCase*(buff: var Buffer, variable, body: untyped): untyped =
     ## little dls that simplifies matching of data. All macro does is replacing
     ## simplified body with case statement. Here is little demonstration of syntax.
-    ## 
+    ##
     ##  .. block:: nim
     ##  decodeCase buff, variable:
     ##      @float:
@@ -294,7 +316,7 @@ macro decodeCase*(buff: var Buffer, variable, body: untyped): untyped =
     ##          for i in variable:
     ##              echo i
     ##      @any:
-    ##          echo "we found something that is not listed above" 
+    ##          echo "we found something that is not listed above"
     var caseStmt = newTree(nnkCaseStmt, quote do: `buff`.readU(uint32))
 
     for b in body:
@@ -304,7 +326,8 @@ macro decodeCase*(buff: var Buffer, variable, body: untyped): untyped =
             of "any":
                 var st = b[2]
                 st.insert(0, quote do:
-                    `buff`.cursor.dec(sizeof(uint32))    
+                    `buff`.cursor.dec(sizeof(uint32))
+
                 )
                 caseStmt.add(newTree(nnkElse, st))
             else:
@@ -318,52 +341,3 @@ macro decodeCase*(buff: var Buffer, variable, body: untyped): untyped =
             error("invalid syntax" & b.lineInfo)
 
     return caseStmt
-
-when isMainModule:
-    type
-        Vec = object
-            x, y: float
-        Mec = object
-            x, y: float
-            l: ref float
-        F = distinct int
-
-    var buff = initBuffer()
-
-    buff.write(1.F)
-    buff.write("hello")
-    buff.write(Vec(x: 10, y: 20))
-    buff.write(10.int32)
-    buff.write(100.2)
-
-    var f: ref float; new f; f[] = 20.5
-    buff.write(Mec(x: 10, y: 30, l: f))
-    buff.write(@[1, 3, 4])
-
-    var complex = newSeq[ref Vec](3)
-    for e in complex.mitems:
-        new e
-        e[] = Vec(x: 10, y: 30)
-    buff.write(complex)
-
-    var re = buff.reader
-
-    assert re.read(F).int == 1
-    assert re.read(string) == "hello"
-    assert re.read(Vec) == Vec(x: 10, y: 20)
-    assert re.read(int32) == 10
-    assert re.read(float) == 100.2
-
-    decodeCase re, m:
-        @Mec:
-            assert m.x == 10
-            assert m.y == 30
-            assert m.l[] == 20.5
-        @Vec:
-            assert false
-        @any:
-            assert false
-
-    assert re.read(seq[int]) == @[1, 3, 4]
-    for e in re.read(seq[ref Vec]):
-        assert e[] == Vec(x: 10, y: 30)

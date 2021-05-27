@@ -9,6 +9,49 @@ import unittest, math
 
 import netbuff
 
+test "simple macro":
+    type Rec = ref object
+        b: Rec
+
+    check simple float
+    check simple (float, float)
+    check not simple tuple[x: float, y: ref float]
+    check not simple (float, (float, (float, ref int)))
+    check not simple Rec
+    check not simple string
+    check not simple TaintedString
+
+test "type stress test":
+    var buff = initBuffer()
+
+    var a: ref int32
+    new a
+    a[] = 10
+
+    let b = (10i32, 10i32, a)
+    buff.write(b)
+
+    type Nested = ref object
+        i: int
+        value: Nested
+
+    let c = Nested(i: 10, value: Nested(i: 20, value: Nested(i: 30)))
+    buff.write(c)
+
+    var re = buff.reader
+
+    let rb = re.read((int32, int32, ref int32))
+    check rb[0] == b[0]
+    check rb[1] == b[1]
+    check rb[2][] == b[2][]
+
+    let bc = re.read(Nested)
+    check bc.i == c.i
+    check bc.value.i == c.value.i
+    check bc.value.value.i == c.value.value.i
+    check bc.value.value.value == c.value.value.value
+
+
 test "primitives":
     var buff = initBuffer()
 
@@ -27,20 +70,20 @@ test "primitives":
     var reader = buff.reader
 
     check reader.read(int32) == 10.int32
-    
+
     try:
         discard reader.read(int32)
         check false
     except ValueError:
         discard
-    
+
     check reader.read(bool) == true
     check reader.read(string) == "hello"
     check reader.read(float32) == 10.2f32
     check reader.read(float64) == PI
 
 test "complex":
-    type 
+    type
         Vector = tuple
             x, y: float
         StackAllocated = object
